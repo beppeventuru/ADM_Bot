@@ -72,44 +72,65 @@ async function extractLatestNewsWithBrowser() {
         );
       }
 
-      function pickTitleFromSameCard(linkEl) {
-        // 1) testo dei fratelli precedenti nello stesso contenitore
+      function isLikelySource(text) {
+        const t = cleanText(text);
+
+        return (
+          t &&
+          t.length > 2 &&
+          t.length < 50 &&
+          /^[A-ZÀ-Ú0-9\s.'-]+$/.test(t)
+        );
+      }
+
+      function extractCardData(linkEl) {
         let prev = linkEl.previousElementSibling;
-        const candidates = [];
+        const titleCandidates = [];
+        const sourceCandidates = [];
 
         while (prev) {
-          const t = cleanText(prev.innerText || prev.textContent);
-          if (!isBadTitle(t)) {
-            candidates.push(t);
+          const text = cleanText(prev.innerText || prev.textContent);
+
+          if (!isBadTitle(text)) {
+            titleCandidates.push(text);
           }
 
-          const inner = Array.from(prev.querySelectorAll("h1,h2,h3,h4,p,div,span,strong,b"))
-            .map(el => cleanText(el.innerText || el.textContent))
-            .filter(t => !isBadTitle(t));
+          if (isLikelySource(text)) {
+            sourceCandidates.push(text);
+          }
 
-          candidates.push(...inner);
+          const inner = Array.from(
+            prev.querySelectorAll("h1,h2,h3,h4,p,div,span,strong,b")
+          )
+            .map(el => cleanText(el.innerText || el.textContent))
+            .filter(Boolean);
+
+          inner.forEach(t => {
+            if (!isBadTitle(t)) {
+              titleCandidates.push(t);
+            }
+
+            if (isLikelySource(t)) {
+              sourceCandidates.push(t);
+            }
+          });
+
           prev = prev.previousElementSibling;
         }
 
-        if (candidates.length) {
-          candidates.sort((a, b) => b.length - a.length);
-          return candidates[0];
+        let title = "Nuova notizia";
+        let source = "";
+
+        if (titleCandidates.length) {
+          titleCandidates.sort((a, b) => b.length - a.length);
+          title = titleCandidates[0];
         }
 
-        // 2) cerca nel parent immediato, ma senza salire troppo
-        const parent = linkEl.parentElement;
-        if (parent) {
-          const nearby = Array.from(parent.querySelectorAll("h1,h2,h3,h4,p,div,span,strong,b"))
-            .map(el => cleanText(el.innerText || el.textContent))
-            .filter(t => !isBadTitle(t));
-
-          if (nearby.length) {
-            nearby.sort((a, b) => b.length - a.length);
-            return nearby[0];
-          }
+        if (sourceCandidates.length) {
+          source = sourceCandidates[0];
         }
 
-        return "Nuova notizia";
+        return { title, source };
       }
 
       const sourceAnchors = Array.from(document.querySelectorAll("a[href]"))
@@ -126,10 +147,11 @@ async function extractLatestNewsWithBrowser() {
       }
 
       const first = sourceAnchors[0];
-      const title = pickTitleFromSameCard(first.el);
+      const cardData = extractCardData(first.el);
 
       return {
-        title,
+        source: cardData.source,
+        title: cardData.title,
         url: first.url
       };
     });
@@ -144,12 +166,14 @@ async function extractLatestNewsWithBrowser() {
   }
 }
 
-async function sendTelegram(title, url) {
+async function sendTelegram(source, title, url) {
+  const safeSource = escapeHtml(source || "");
   const safeTitle = escapeHtml(title);
   const safeUrl = escapeHtml(url);
 
   const text =
     `🆕 <b>Nuova notizia nella rassegna</b>\n\n` +
+    (safeSource ? `<i>${safeSource}</i>\n\n` : "") +
     `<b>${safeTitle}</b>\n\n` +
     `<a href="${safeUrl}">Apri notizia</a>`;
 
@@ -182,7 +206,7 @@ async function main() {
     return;
   }
 
-  await sendTelegram(latest.title, latest.url);
+  await sendTelegram(latest.source, latest.title, latest.url);
   saveState({ url: latest.url });
   console.log("Nuova notizia inviata:", latest.url);
 }
