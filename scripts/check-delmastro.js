@@ -59,85 +59,78 @@ async function extractLatestNewsWithBrowser() {
         }
       }
 
-      function findCardTitle(linkEl) {
-        const badTexts = new Set([
-          "Apri la fonte",
-          "Apri notizia",
-          "Fonte",
-          "Apri link",
-          "Leggi",
-          "Leggi tutto"
-        ]);
+      function isBadTitle(text) {
+        const t = cleanText(text).toLowerCase();
+        return (
+          !t ||
+          t === "apri la fonte" ||
+          t === "apri notizia" ||
+          t === "osservatorio caso delmastro" ||
+          t === "rassegna" ||
+          t === "fonti" ||
+          t.length < 15
+        );
+      }
 
-        // risale di qualche livello per trovare il riquadro della notizia
-        let container = linkEl;
-        for (let i = 0; i < 6; i++) {
-          if (!container.parentElement) break;
-          container = container.parentElement;
+      function pickTitleFromSameCard(linkEl) {
+        // 1) testo dei fratelli precedenti nello stesso contenitore
+        let prev = linkEl.previousElementSibling;
+        const candidates = [];
+
+        while (prev) {
+          const t = cleanText(prev.innerText || prev.textContent);
+          if (!isBadTitle(t)) {
+            candidates.push(t);
+          }
+
+          const inner = Array.from(prev.querySelectorAll("h1,h2,h3,h4,p,div,span,strong,b"))
+            .map(el => cleanText(el.innerText || el.textContent))
+            .filter(t => !isBadTitle(t));
+
+          candidates.push(...inner);
+          prev = prev.previousElementSibling;
         }
-
-        // 1) prova con heading classici
-        const heading = container.querySelector("h1, h2, h3, h4");
-        if (heading) {
-          const t = cleanText(heading.textContent);
-          if (t && !badTexts.has(t)) return t;
-        }
-
-        // 2) prova con elementi grandi e testuali nel contenitore
-        const candidates = Array.from(
-          container.querySelectorAll("h1, h2, h3, h4, strong, b, p, div, span")
-        )
-          .map(el => cleanText(el.textContent))
-          .filter(t =>
-            t &&
-            t.length > 20 &&
-            !badTexts.has(t) &&
-            !t.startsWith("Apri la fonte") &&
-            !t.startsWith("Apri notizia")
-          );
 
         if (candidates.length) {
           candidates.sort((a, b) => b.length - a.length);
           return candidates[0];
         }
 
-        // 3) fallback: cerca testo nei fratelli precedenti del link
-        let prev = linkEl.previousElementSibling;
-        while (prev) {
-          const t = cleanText(prev.textContent);
-          if (t && t.length > 20 && !badTexts.has(t)) {
-            return t;
+        // 2) cerca nel parent immediato, ma senza salire troppo
+        const parent = linkEl.parentElement;
+        if (parent) {
+          const nearby = Array.from(parent.querySelectorAll("h1,h2,h3,h4,p,div,span,strong,b"))
+            .map(el => cleanText(el.innerText || el.textContent))
+            .filter(t => !isBadTitle(t));
+
+          if (nearby.length) {
+            nearby.sort((a, b) => b.length - a.length);
+            return nearby[0];
           }
-          prev = prev.previousElementSibling;
         }
 
         return "Nuova notizia";
       }
 
-      const links = Array.from(document.querySelectorAll("a[href]"))
+      const sourceAnchors = Array.from(document.querySelectorAll("a[href]"))
+        .filter(a => /apri la fonte/i.test(cleanText(a.textContent)))
         .map(a => ({
           el: a,
-          text: cleanText(a.textContent),
           url: a.href
         }))
         .filter(x => x.url && /^https?:\/\//i.test(x.url))
         .filter(x => !isBlockedHost(x.url));
 
-      // preferisce esplicitamente i link "Apri la fonte"
-      const sourceLink =
-        links.find(x => /apri la fonte/i.test(x.text)) ||
-        links.find(x => /apri/i.test(x.text)) ||
-        links[0];
-
-      if (!sourceLink) {
-        throw new Error("Nessun link notizia trovato dopo il rendering della pagina.");
+      if (!sourceAnchors.length) {
+        throw new Error("Nessun link 'Apri la fonte' trovato.");
       }
 
-      const title = findCardTitle(sourceLink.el);
+      const first = sourceAnchors[0];
+      const title = pickTitleFromSameCard(first.el);
 
       return {
         title,
-        url: sourceLink.url
+        url: first.url
       };
     });
 
