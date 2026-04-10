@@ -19,7 +19,13 @@ jobs:
       - name: Installa Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
+
+      - name: Installa Playwright
+        run: |
+          npm init -y
+          npm install playwright
+          npx playwright install --with-deps chromium
 
       - name: Esegui controllo
         env:
