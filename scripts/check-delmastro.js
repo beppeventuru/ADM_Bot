@@ -92,8 +92,21 @@ async function extractLatestNewsWithBrowser() {
   }
 }
 
+function escapeHtml(text) {
+  return String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
 async function sendTelegram(title, url) {
-  const text = `🆕 Nuovo articolo nella rassegna\n\n${title}\n\n${url}`;
+  const safeTitle = escapeHtml(title);
+  const safeUrl = escapeHtml(url);
+
+  const text =
+    `🆕 <b>Nuova notizia nella rassegna</b>\n\n` +
+    `<b>${safeTitle}</b>\n\n` +
+    `<a href="${safeUrl}">Apri notizia</a>`;
 
   const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
     method: "POST",
@@ -103,6 +116,7 @@ async function sendTelegram(title, url) {
     body: JSON.stringify({
       chat_id: CHAT_ID,
       text,
+      parse_mode: "HTML",
       disable_web_page_preview: false
     })
   });
