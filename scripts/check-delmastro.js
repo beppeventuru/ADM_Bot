@@ -23,26 +23,11 @@ function saveState(data) {
   fs.writeFileSync(STATE_FILE, JSON.stringify(data, null, 2), "utf8");
 }
 
-function isValidNewsUrl(url) {
-  try {
-    const u = new URL(url);
-    const host = u.hostname.toLowerCase();
-
-    if (!["http:", "https:"].includes(u.protocol)) return false;
-
-    const blockedHosts = [
-      "tongatron.github.io",
-      "github.com",
-      "www.github.com",
-      "api.telegram.org",
-      "t.me",
-      "telegram.me"
-    ];
-
-    return !blockedHosts.includes(host);
-  } catch {
-    return false;
-  }
+function escapeHtml(text) {
+  return String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 async function extractLatestNewsWithBrowser() {
@@ -53,50 +38,117 @@ async function extractLatestNewsWithBrowser() {
     await page.goto(SITE_URL, { waitUntil: "networkidle", timeout: 60000 });
     await page.waitForTimeout(5000);
 
-    const links = await page.$$eval("a[href]", anchors =>
-      anchors.map(a => ({
-        title: (a.textContent || "").replace(/\s+/g, " ").trim(),
-        url: a.href
-      }))
-    );
-
-    const validLinks = links.filter(x => x.url && /^https?:\/\//i.test(x.url));
-
-    const newsLinks = validLinks.filter(x => {
-      try {
-        const u = new URL(x.url);
-        const host = u.hostname.toLowerCase();
-        return ![
-          "tongatron.github.io",
-          "github.com",
-          "www.github.com",
-          "api.telegram.org",
-          "t.me",
-          "telegram.me"
-        ].includes(host);
-      } catch {
-        return false;
+    const latest = await page.evaluate(() => {
+      function cleanText(text) {
+        return String(text || "").replace(/\s+/g, " ").trim();
       }
+
+      function isBlockedHost(url) {
+        try {
+          const host = new URL(url).hostname.toLowerCase();
+          return [
+            "tongatron.github.io",
+            "github.com",
+            "www.github.com",
+            "api.telegram.org",
+            "t.me",
+            "telegram.me"
+          ].includes(host);
+        } catch {
+          return true;
+        }
+      }
+
+      function findCardTitle(linkEl) {
+        const badTexts = new Set([
+          "Apri la fonte",
+          "Apri notizia",
+          "Fonte",
+          "Apri link",
+          "Leggi",
+          "Leggi tutto"
+        ]);
+
+        // risale di qualche livello per trovare il riquadro della notizia
+        let container = linkEl;
+        for (let i = 0; i < 6; i++) {
+          if (!container.parentElement) break;
+          container = container.parentElement;
+        }
+
+        // 1) prova con heading classici
+        const heading = container.querySelector("h1, h2, h3, h4");
+        if (heading) {
+          const t = cleanText(heading.textContent);
+          if (t && !badTexts.has(t)) return t;
+        }
+
+        // 2) prova con elementi grandi e testuali nel contenitore
+        const candidates = Array.from(
+          container.querySelectorAll("h1, h2, h3, h4, strong, b, p, div, span")
+        )
+          .map(el => cleanText(el.textContent))
+          .filter(t =>
+            t &&
+            t.length > 20 &&
+            !badTexts.has(t) &&
+            !t.startsWith("Apri la fonte") &&
+            !t.startsWith("Apri notizia")
+          );
+
+        if (candidates.length) {
+          candidates.sort((a, b) => b.length - a.length);
+          return candidates[0];
+        }
+
+        // 3) fallback: cerca testo nei fratelli precedenti del link
+        let prev = linkEl.previousElementSibling;
+        while (prev) {
+          const t = cleanText(prev.textContent);
+          if (t && t.length > 20 && !badTexts.has(t)) {
+            return t;
+          }
+          prev = prev.previousElementSibling;
+        }
+
+        return "Nuova notizia";
+      }
+
+      const links = Array.from(document.querySelectorAll("a[href]"))
+        .map(a => ({
+          el: a,
+          text: cleanText(a.textContent),
+          url: a.href
+        }))
+        .filter(x => x.url && /^https?:\/\//i.test(x.url))
+        .filter(x => !isBlockedHost(x.url));
+
+      // preferisce esplicitamente i link "Apri la fonte"
+      const sourceLink =
+        links.find(x => /apri la fonte/i.test(x.text)) ||
+        links.find(x => /apri/i.test(x.text)) ||
+        links[0];
+
+      if (!sourceLink) {
+        throw new Error("Nessun link notizia trovato dopo il rendering della pagina.");
+      }
+
+      const title = findCardTitle(sourceLink.el);
+
+      return {
+        title,
+        url: sourceLink.url
+      };
     });
 
-    if (!newsLinks.length) {
-      throw new Error("Nessun link notizia trovato dopo il rendering della pagina.");
+    if (!latest || !latest.url) {
+      throw new Error("Impossibile estrarre la notizia.");
     }
 
-    return {
-      title: newsLinks[0].title || "Nuovo articolo",
-      url: newsLinks[0].url
-    };
+    return latest;
   } finally {
     await browser.close();
   }
-}
-
-function escapeHtml(text) {
-  return String(text)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
 }
 
 async function sendTelegram(title, url) {
