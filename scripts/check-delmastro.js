@@ -36,6 +36,31 @@ function saveState(data) {
   fs.writeFileSync(STATE_FILE, JSON.stringify(data, null, 2), "utf8");
 }
 
+function isValidNewsUrl(url) {
+  try {
+    const u = new URL(url);
+
+    if (!["http:", "https:"].includes(u.protocol)) return false;
+
+    const host = u.hostname.toLowerCase();
+
+    const blockedHosts = [
+      "tongatron.github.io",
+      "github.com",
+      "www.github.com",
+      "api.telegram.org",
+      "t.me",
+      "telegram.me"
+    ];
+
+    if (blockedHosts.includes(host)) return false;
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function extractLatestNews(html) {
   const matches = [...html.matchAll(/<a[^>]+href="([^"]+)"[^>]*>(.*?)<\/a>/gis)];
 
@@ -45,25 +70,20 @@ function extractLatestNews(html) {
       const title = m[2].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
       return { href, title };
     })
-    .filter(x =>
-      x.href &&
-      x.title &&
-      x.title.length > 8 &&
-      /^https?:\/\//i.test(x.href)
-    );
+    .filter(x => isValidNewsUrl(x.href));
 
   if (!links.length) {
-    throw new Error("Nessuna notizia trovata.");
+    throw new Error("Nessun link notizia trovato.");
   }
 
   return {
-    title: links[0].title,
+    title: links[0].title || "Nuovo articolo",
     url: links[0].href
   };
 }
 
 async function sendTelegram(title, url) {
-  const text = `🆕 Nuova notizia su Osservatorio Delmastro\n\n${title}\n\n${url}`;
+  const text = `🆕 Nuovo articolo nella rassegna\n\n${title}\n\n${url}`;
 
   const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
     method: "POST",
